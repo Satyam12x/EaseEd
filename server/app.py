@@ -9,6 +9,10 @@ import io
 import os
 from dotenv import load_dotenv
 import json
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import SRTFormatter
+import re
+from urllib.parse import urlparse, parse_qs
 
 app = FastAPI(title="EaseEd Backend")
 
@@ -25,7 +29,7 @@ app.add_middleware(
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 youtube_service = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
-model = genai.GenerativeModel("gemini-2.5-flash")  # Updated: Stable model with generateContent support
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 # Helper: Extract text from PDF
 async def extract_pdf_text(file: UploadFile):
@@ -43,25 +47,64 @@ def process_image(file: UploadFile):
     img_byte_arr = img_byte_arr.getvalue()
     return img_byte_arr
 
-# Helper: Get YouTube content (transcript or description)
+# Helper: Get YouTube content (transcript or description) - Fixed URL parsing
 async def get_youtube_content(url: str):
     try:
-        video_id = url.split("v=")[1].split("&")[0]
-        video_response = youtube_service.videos().list(part="snippet", id=video_id).execute()
-        description = video_response["items"][0]["snippet"]["description"]
-        try:
-            captions = youtube_service.captions().list(part="snippet", videoId=video_id).execute()
-            if captions["items"]:
-                caption_id = captions["items"][0]["id"]
-                transcript = youtube_service.captions().download(id=caption_id, tfmt="srt").execute()
-                content = transcript.decode("utf-8")
+        # Parse URL and extract video ID
+        parsed_url = urlparse(url)
+        if parsed_url.hostname in ['www.youtube.com', 'youtube.com']:
+            query = parse_qs(parsed_url.query)
+            video_id = query.get('v', [None])[0]
+        elif parsed_url.hostname in ['youtu.be']:
+            video_id = parsed_url.path.lstrip('/')
+        else:
+            # Fallback to regex for other formats (e.g., embed)
+            match = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([0-9A-Za-z_-]{11})', url)
+            if match:
+                video_id = match.group(1)
             else:
-                content = description
-        except HttpError:
-            content = description
-        return content
-    except:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL or no access to content.")
+                raise ValueError("Invalid YouTube URL - no video ID found.")
+
+        if not video_id or len(video_id) != 11:
+            raise ValueError("Invalid YouTube URL - video ID is malformed.")
+
+        # Get video description using YouTube API
+        video_response = youtube_service.videos().list(part="snippet", id=video_id).execute()
+        if not video_response["items"]:
+            raise ValueError("Video not found or private.")
+        description = video_response["items"][0]["snippet"]["description"]
+        
+        # Try to get transcript using youtube-transcript-api
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            # Prefer English transcript (generated or manual)
+            transcript = None
+            for lang in ['en', 'en-US', 'en-GB']:
+                try:
+                    transcript = transcript_list.find_transcript([lang])
+                    break
+                except:
+                    continue
+            if not transcript:
+                transcript = transcript_list.find_generated_transcript(['en']) or transcript_list.find_manually_created_transcript(['en'])
+            transcript_data = transcript.fetch()
+            # Format as SRT and extract plain text
+            formatter = SRTFormatter()
+            srt_formatted = formatter.format_transcript(transcript_data)
+            content = '\n'.join(line for line in srt_formatted.split('\n') if line.strip() and not line.replace(':', '').isdigit() and '-->' not in line)
+            content = content.strip()
+            if content:
+                return content[:2000]  # Limit for Gemini
+        except Exception as transcript_err:
+            print(f"Transcript fetch failed (falling back to description): {transcript_err}")
+        
+        # Fallback to description
+        if description:
+            return description[:2000]
+        else:
+            raise ValueError("No description or transcript available for this video.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching YouTube content: {str(e)}")
 
 # Endpoint: Learn/Explain from text
 @app.post("/api/learn/text")
