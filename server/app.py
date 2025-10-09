@@ -9,8 +9,7 @@ import io
 import os
 from dotenv import load_dotenv
 import json
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import SRTFormatter
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 import re
 from urllib.parse import urlparse, parse_qs
 
@@ -47,7 +46,7 @@ def process_image(file: UploadFile):
     img_byte_arr = img_byte_arr.getvalue()
     return img_byte_arr
 
-# Helper: Get YouTube content (transcript or description) - Fixed URL parsing
+# Helper: Get YouTube content (transcript or description) - Enhanced for full transcript
 async def get_youtube_content(url: str):
     try:
         # Parse URL and extract video ID
@@ -58,7 +57,6 @@ async def get_youtube_content(url: str):
         elif parsed_url.hostname in ['youtu.be']:
             video_id = parsed_url.path.lstrip('/')
         else:
-            # Fallback to regex for other formats (e.g., embed)
             match = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([0-9A-Za-z_-]{11})', url)
             if match:
                 video_id = match.group(1)
@@ -68,41 +66,43 @@ async def get_youtube_content(url: str):
         if not video_id or len(video_id) != 11:
             raise ValueError("Invalid YouTube URL - video ID is malformed.")
 
-        # Get video description using YouTube API
+        # Get video title and description using YouTube API
         video_response = youtube_service.videos().list(part="snippet", id=video_id).execute()
         if not video_response["items"]:
             raise ValueError("Video not found or private.")
+        title = video_response["items"][0]["snippet"]["title"]
         description = video_response["items"][0]["snippet"]["description"]
         
         # Try to get transcript using youtube-transcript-api
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            # Prefer English transcript (generated or manual)
             transcript = None
-            for lang in ['en', 'en-US', 'en-GB']:
+            # Try all available transcripts (prioritize English, then any language)
+            available_languages = [t.language_code for t in transcript_list]
+            for lang in ['en', 'en-US', 'en-GB'] + available_languages:
                 try:
                     transcript = transcript_list.find_transcript([lang])
                     break
-                except:
+                except NoTranscriptFound:
                     continue
             if not transcript:
-                transcript = transcript_list.find_generated_transcript(['en']) or transcript_list.find_manually_created_transcript(['en'])
+                transcript = transcript_list.find_generated_transcript(available_languages) or transcript_list.find_manually_created_transcript(available_languages)
             transcript_data = transcript.fetch()
-            # Format as SRT and extract plain text
-            formatter = SRTFormatter()
-            srt_formatted = formatter.format_transcript(transcript_data)
-            content = '\n'.join(line for line in srt_formatted.split('\n') if line.strip() and not line.replace(':', '').isdigit() and '-->' not in line)
-            content = content.strip()
+            # Extract plain text from transcript (no timestamps)
+            content = ' '.join(item['text'] for item in transcript_data).strip()
             if content:
-                return content[:2000]  # Limit for Gemini
+                # Include title for context
+                full_content = f"Video Title: {title}\n\nTranscript:\n{content}"
+                return full_content[:5000]  # Increased limit for detailed notes
         except Exception as transcript_err:
             print(f"Transcript fetch failed (falling back to description): {transcript_err}")
         
-        # Fallback to description
-        if description:
-            return description[:2000]
+        # Fallback to title + description
+        fallback_content = f"Video Title: {title}\n\nDescription:\n{description}"
+        if description or title:
+            return fallback_content[:5000]
         else:
-            raise ValueError("No description or transcript available for this video.")
+            raise ValueError("No description, title, or transcript available for this video.")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching YouTube content: {str(e)}")
 
