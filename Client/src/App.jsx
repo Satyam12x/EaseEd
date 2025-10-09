@@ -1,35 +1,33 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Home from './pages/Home';
-import Result from './pages/Result';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import InputForm from './components/InputForm';
+import Results from './components/Results';
 import './index.css';
 
 const App = () => {
-  const [theme, setTheme] = useState('light');
+  const [result, setResult] = useState('');
 
-  const toggleTheme = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light');
-    document.documentElement.classList.toggle('dark');
+  const handleSubmit = (result) => {
+    console.log('App received result:', result);
+    setResult(result);
   };
 
   return (
-    <div className={`min-h-screen ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-900 text-white'}`}>
-      <Router>
-        <header className="p-4 bg-teal-600 text-white flex justify-between items-center">
-          <h1 className="text-2xl font-bold">EaseEd</h1>
-          <button
-            onClick={toggleTheme}
-            className="px-4 py-2 bg-teal-700 rounded-md hover:bg-teal-800 transition"
-          >
-            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
-          </button>
-        </header>
+    <Router>
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex flex-col items-center justify-center p-4">
+        <h1 className="text-4xl font-bold mb-8 text-gray-900 dark:text-white">EaseEd</h1>
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/result" element={<Result />} />
+          <Route
+            path="/"
+            element={<InputForm onSubmit={handleSubmit} />}
+          />
+          <Route
+            path="/results"
+            element={<Results result={result} />}
+          />
         </Routes>
-      </Router>
-    </div>
+      </div>
+    </Router>
   );
 };
 

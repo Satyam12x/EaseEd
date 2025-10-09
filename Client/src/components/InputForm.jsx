@@ -1,89 +1,133 @@
-import React from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
-import { FaUpload, FaPlayCircle } from 'react-icons/fa';
+import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 
-const InputForm = ({ inputType, setInputType, setInputData, onSubmit }) => {
-  const handleInputChange = (e) => {
-    if (inputType === 'text' || inputType === 'youtube') {
-      setInputData(e.target.value);
-    } else {
-      setInputData(e.target.files[0]);
-    }
-  };
+const InputForm = ({ onSubmit }) => {
+  const [inputData, setInputData] = useState('');
+  const [inputType, setInputType] = useState('text');
+  const [goal, setGoal] = useState('learn');
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      let formData = new FormData();
-      let endpoint = '';
-      if (inputType === 'text') {
-        formData.append('text', inputData);
-        endpoint = `/api/learn/text`; // Default to learn for simplicity
-      } else if (inputType === 'youtube') {
-        formData.append('url', inputData);
-        endpoint = `/api/notes/youtube`;
-      } else {
-        formData.append('file', inputData);
-        endpoint = `/api/learn/${inputType}`;
+      // Basic validation
+      if (inputType === 'text' && !inputData.trim()) {
+        throw new Error('Please provide input text');
+      }
+      if (inputType === 'youtube' && !inputData.trim()) {
+        throw new Error('Please provide a YouTube URL');
+      }
+      if ((inputType === 'pdf' || inputType === 'image') && !inputData) {
+        throw new Error('Please select a file');
+      }
+      if (!goal) {
+        throw new Error('Please select a goal');
       }
 
-      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, formData, {
-        headers: { 'Content-Type': inputType === 'text' || inputType === 'youtube' ? 'application/json' : 'multipart/form-data' },
+      let endpoint = '';
+      const formData = new FormData();
+      if (inputType === 'text') {
+        formData.append('text', inputData);
+        endpoint = `/api/${goal}/text`;
+      } else if (inputType === 'pdf' || inputType === 'image') {
+        formData.append('file', inputData);
+        endpoint = `/api/${goal}/${inputType}`;
+      } else if (inputType === 'youtube') {
+        formData.append('url', inputData);
+        endpoint = `/api/${goal}/youtube`;
+      }
+
+      console.log('Sending request:', {
+        inputType,
+        inputData: inputType === 'text' || inputType === 'youtube' ? inputData : inputData?.name,
+        goal,
+        endpoint,
+        headers: inputType === 'text' ? 'application/x-www-form-urlencoded' : 'multipart/form-data',
       });
+
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, formData, {
+        headers: {
+          'Content-Type': inputType === 'text' ? 'application/x-www-form-urlencoded' : 'multipart/form-data',
+        },
+      });
+
+      console.log('Response received:', response.data);
       onSubmit(response.data.result);
+      navigate('/results'); // Navigate to results page
     } catch (err) {
-      onSubmit(`Error: ${err.response?.data?.detail || 'Something went wrong.'}`);
+      console.error('API Error:', {
+        status: err.response?.status,
+        data: err.response?.data,
+        message: err.message,
+      });
+      onSubmit(`Error: ${err.response?.data?.detail || err.message || 'Something went wrong.'}`);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <motion.form
+      onSubmit={handleSubmit}
+      className="space-y-4 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+    >
       <div>
-        <label className="block text-lg font-medium mb-2 dark:text-white">Input Type</label>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Input Type</label>
         <select
           value={inputType}
-          onChange={(e) => setInputType(e.target.value)}
-          className="w-full p-2 border rounded-md dark:bg-gray-700 dark:text-white"
+          onChange={(e) => {
+            setInputType(e.target.value);
+            setInputData(''); // Reset input when type changes
+          }}
+          className="mt-1 block w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
         >
           <option value="text">Text/Topic</option>
           <option value="pdf">PDF</option>
           <option value="image">Image</option>
-          <option value="youtube">YouTube Link</option>
+          <option value="youtube">YouTube</option>
         </select>
       </div>
       <div>
-        <label className="block text-lg font-medium mb-2 dark:text-white">Upload Input</label>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Input</label>
         {inputType === 'text' || inputType === 'youtube' ? (
           <input
             type="text"
-            placeholder={inputType === 'text' ? 'Enter topic or paragraph' : 'Enter YouTube URL'}
-            onChange={handleInputChange}
-            className="w-full p-2 border rounded-md dark:bg-gray-700 dark:text-white"
+            value={inputData}
+            onChange={(e) => setInputData(e.target.value)}
+            className="mt-1 block w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
+            placeholder={inputType === 'text' ? 'Enter topic or text' : 'Enter YouTube URL'}
           />
         ) : (
-          <div className="flex items-center justify-center w-full">
-            <label className="flex flex-col items-center w-full p-4 border-2 border-dashed rounded-md cursor-pointer hover:border-teal-500 dark:border-gray-600 dark:hover:border-teal-400">
-              <FaUpload className="text-2xl text-teal-500" />
-              <span className="mt-2 text-sm dark:text-white">
-                {inputType === 'pdf' ? 'Upload PDF' : 'Upload Image'}
-              </span>
-              <input
-                type="file"
-                accept={inputType === 'pdf' ? '.pdf' : 'image/*'}
-                onChange={handleInputChange}
-                className="hidden"
-              />
-            </label>
-          </div>
+          <input
+            type="file"
+            onChange={(e) => setInputData(e.target.files[0])}
+            className="mt-1 block w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
+            accept={inputType === 'pdf' ? '.pdf' : 'image/*'}
+          />
         )}
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Goal</label>
+        <select
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          className="mt-1 block w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
+        >
+          <option value="learn">Learn/Explain</option>
+          <option value="quiz">Generate Quiz</option>
+          <option value="notes">Generate Notes</option>
+        </select>
       </div>
       <button
         type="submit"
-        className="w-full bg-teal-500 text-white px-4 py-2 rounded-md hover:bg-teal-600 transition"
+        className="w-full bg-teal-500 text-white p-2 rounded hover:bg-teal-600 transition"
       >
         Submit
       </button>
-    </form>
+    </motion.form>
   );
 };
 
