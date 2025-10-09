@@ -5,3 +5,4 @@ google-api-python-client==2.149.0
 pdfplumber==0.11.4
 Pillow==10.4.0
 python-dotenv==1.0.1
+youtube-transcript-api==0.6.2
